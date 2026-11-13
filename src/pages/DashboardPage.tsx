@@ -12,9 +12,9 @@ import {
   ShieldCheck, 
   TrendingUp, 
   Activity,
-  Sparkles,
-  ChevronRight,
-  Info
+  Sparkles, 
+  ChevronRight, 
+  Info,
 } from 'lucide-react';
 import { useCity } from '../context/CityContext';
 import { CircularGauge } from '../components/common/CircularGauge';
@@ -33,16 +33,54 @@ import {
   CartesianGrid 
 } from 'recharts';
 import { Link } from 'react-router-dom';
+import { fetchCurrentAir, getBrowserLocation, CurrentAirReading } from '../services/currentAirQuality';
 
 export const DashboardPage: React.FC = () => {
   const { selectedCity, setSelectedCityById, cities, lastSyncTime } = useCity();
+  const [locationReading, setLocationReading] = useState<CurrentAirReading | null>(null);
+  const [locationCoordinates, setLocationCoordinates] = useState<[number, number] | null>(null);
+  const [locationLoading, setLocationLoading] = useState(false);
+  const [locationMessage, setLocationMessage] = useState('');
   const [activeChartTab, setActiveChartTab] = useState<'24h' | 'weekly' | 'pm25'>('24h');
+  const useMyLocation = async () => {
+    setLocationLoading(true);
+    setLocationMessage('');
+    try {
+      const position = await getBrowserLocation();
+      const reading = await fetchCurrentAir(position.coords.latitude, position.coords.longitude);
+      setLocationReading(reading);
+      setLocationCoordinates([position.coords.latitude, position.coords.longitude]);
+      setLocationMessage('');
+    } catch (error) {
+      setLocationMessage(error instanceof Error ? error.message : 'Could not load air quality for this location.');
+    } finally {
+      setLocationLoading(false);
+    }
+  };
+
+  const displayCity = locationReading ? {
+    ...selectedCity,
+    id: 'current-location',
+    name: 'Your current location',
+    state: 'Browser location',
+    coordinates: locationCoordinates || selectedCity.coordinates,
+    aqi: locationReading.aqi,
+    category: locationReading.category,
+    dominantPollutant: locationReading.dominantPollutant as typeof selectedCity.dominantPollutant,
+    pollutants: locationReading.pollutants,
+    lastUpdated: `Model time ${new Date(locationReading.time).toLocaleString()}`,
+    monitoringStation: 'CAMS global model · approx. 45 km grid',
+    hourlyTrends: locationReading.hourly.slice(-24).map((point) => ({
+      time: new Date(point.time).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+      aqi: point.aqi, pm25: point.pm25, pm10: point.pm10,
+    })),
+  } : selectedCity;
 
   // Greeting based on current hour
   const currentHour = new Date().getHours();
   const greeting = currentHour < 12 ? 'Good morning' : currentHour < 17 ? 'Good afternoon' : 'Good evening';
 
-  const categoryInfo = getCategoryForAQI(selectedCity.aqi);
+  const categoryInfo = getCategoryForAQI(displayCity.aqi);
 
   // Pollutant statuses and colors
   const getPollutantStatus = (name: string, val: number) => {
@@ -64,16 +102,16 @@ export const DashboardPage: React.FC = () => {
     }
   };
 
-  const pm25Stat = getPollutantStatus('PM2.5', selectedCity.pollutants.pm25);
-  const pm10Stat = getPollutantStatus('PM10', selectedCity.pollutants.pm10);
-  const no2Stat = getPollutantStatus('NO2', selectedCity.pollutants.no2);
-  const so2Stat = getPollutantStatus('SO2', selectedCity.pollutants.so2);
-  const coStat = getPollutantStatus('CO', selectedCity.pollutants.co);
-  const o3Stat = getPollutantStatus('O3', selectedCity.pollutants.o3);
+  const pm25Stat = getPollutantStatus('PM2.5', displayCity.pollutants.pm25);
+  const pm10Stat = getPollutantStatus('PM10', displayCity.pollutants.pm10);
+  const no2Stat = getPollutantStatus('NO2', displayCity.pollutants.no2);
+  const so2Stat = getPollutantStatus('SO2', displayCity.pollutants.so2);
+  const coStat = getPollutantStatus('CO', displayCity.pollutants.co);
+  const o3Stat = getPollutantStatus('O3', displayCity.pollutants.o3);
 
   // Sparkline data generators
-  const sparkPM25 = selectedCity.hourlyTrends.map((h) => h.pm25);
-  const sparkPM10 = selectedCity.hourlyTrends.map((h) => h.pm10);
+  const sparkPM25 = displayCity.hourlyTrends.map((h) => h.pm25);
+  const sparkPM10 = displayCity.hourlyTrends.map((h) => h.pm10);
   const sparkNO2 = [28, 30, 32, 35, 36, 38, 36, 34, 32, 35, 36, 36];
   const sparkSO2 = [10, 11, 12, 13, 12, 12, 11, 12, 13, 12, 12, 12];
   const sparkCO = [0.6, 0.7, 0.7, 0.8, 0.9, 0.8, 0.7, 0.7, 0.8, 0.8, 0.9, 0.8];
@@ -93,33 +131,49 @@ export const DashboardPage: React.FC = () => {
             <span className="text-charcoal-300">•</span>
             <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-full border border-emerald-200">
               <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
-              Demo Data Mode
+              {locationReading ? 'Modelled location estimate' : 'Demo Data Mode'}
             </span>
           </div>
 
           <div className="flex flex-wrap items-baseline gap-3">
             <h1 className="text-2xl sm:text-3xl font-extrabold text-charcoal-900 tracking-tight flex items-center gap-2">
               <MapPin className="w-6 h-6 text-forest-700 shrink-0" />
-              {selectedCity.name}, {selectedCity.state}
+              {displayCity.name}, {displayCity.state}
             </h1>
             <span className="text-xs text-charcoal-500 font-medium hidden sm:inline">
-              Station: {selectedCity.monitoringStation}
+              Station: {displayCity.monitoringStation}
             </span>
           </div>
         </div>
 
         {/* City Selector and Telemetry Timestamp */}
         <div className="flex flex-wrap items-center gap-3">
+          <button
+            onClick={locationReading ? () => { setLocationReading(null); setLocationCoordinates(null); setLocationMessage(''); } : useMyLocation}
+            disabled={locationLoading}
+            className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-white border border-forest-200 text-forest-800 font-bold text-xs shadow-sm hover:bg-forest-50 disabled:opacity-60"
+            title="Use browser location to load a modelled local air-quality estimate"
+          >
+            <Compass className="w-3.5 h-3.5" />
+            {locationLoading ? 'Loading�' : locationReading ? 'Use demo city' : 'Use my location'}
+          </button>
           <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-[#F8FAF9] border border-charcoal-200 text-xs text-charcoal-600 font-medium">
             <Clock className="w-3.5 h-3.5 text-charcoal-400" />
-            <span>{selectedCity.lastUpdated}</span>
+            <span>{displayCity.lastUpdated}</span>
           </div>
 
           <select
-            value={selectedCity.id}
-            onChange={(e) => setSelectedCityById(e.target.value)}
+            value={locationReading ? 'current-location' : selectedCity.id}
+            onChange={(e) => {
+              setLocationMessage('');
+              if (e.target.value === 'current-location') return;
+              setLocationReading(null);
+              setLocationCoordinates(null);
+              setSelectedCityById(e.target.value);
+            }}
             className="px-3.5 py-2 rounded-xl bg-forest-50 border border-forest-200 font-bold text-xs sm:text-sm text-forest-900 outline-none hover:bg-forest-100 focus:ring-2 focus:ring-forest-300 transition-all cursor-pointer"
           >
+            {locationReading && <option value="current-location">Your current location (model estimate)</option>}
             {cities.map((city) => (
               <option key={city.id} value={city.id}>
                 {city.name} ({city.state}) — {city.aqi} AQI
@@ -128,6 +182,18 @@ export const DashboardPage: React.FC = () => {
           </select>
         </div>
       </div>
+
+      {locationMessage && (
+        <div role="alert" className="mb-4 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-xs text-amber-900">
+          {locationMessage}
+        </div>
+      )}
+
+      {locationReading && (
+        <div className="mb-4 rounded-xl border border-sky-200 bg-sky-50 px-4 py-3 text-xs leading-relaxed text-sky-950">
+          <b>Modelled estimate, not a nearby monitor reading.</b> Pollutant concentrations come from Open-Meteo�s CAMS global forecast grid (about 45 km). The displayed CPCB-scale estimate applies Indian AQI concentration breakpoints to the latest hourly model values; official CPCB AQI uses longer averaging periods and data-coverage rules. Model timestamp: {new Date(locationReading.time).toLocaleString()}. Location coordinates are sent to Open-Meteo to retrieve the estimate. <a className="underline" href="https://open-meteo.com/en/docs/air-quality-api" target="_blank" rel="noreferrer">Data and attribution</a> � <a className="underline" href="https://www.cpcb.nic.in/ccr_docs/About_AQI.pdf" target="_blank" rel="noreferrer">CPCB method</a>.
+        </div>
+      )}
 
       {/* Main AQI Section & Gauge Card */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
@@ -143,19 +209,19 @@ export const DashboardPage: React.FC = () => {
                   Current Atmospheric Status
                 </h2>
               </div>
-              <AQIBadge category={selectedCity.category} size="lg" />
+              <AQIBadge category={displayCity.category} size="lg" />
             </div>
 
             {/* Circular Gauge */}
             <div className="flex justify-center my-4 py-2">
-              <CircularGauge value={selectedCity.aqi} max={500} size={220} />
+              <CircularGauge value={displayCity.aqi} max={500} size={220} />
             </div>
 
             {/* CPCB Scale Bar */}
             <div className="mt-4 pt-4 border-t border-charcoal-100">
               <div className="flex justify-between items-center text-[11px] font-semibold text-charcoal-500 mb-1.5">
                 <span>CPCB Severity Gradient</span>
-                <span className="text-charcoal-800 font-bold">{selectedCity.category} Zone</span>
+                <span className="text-charcoal-800 font-bold">{displayCity.category} Zone</span>
               </div>
               {/* Visual Multi-Segment Color Bar */}
               <div className="h-2.5 w-full rounded-full flex overflow-hidden gap-0.5">
@@ -178,7 +244,7 @@ export const DashboardPage: React.FC = () => {
               <div>
                 <div className="flex items-center gap-2">
                   <span className="text-xs font-bold text-charcoal-900">
-                    Primary Pollutant: {selectedCity.dominantPollutant}
+                    Primary Pollutant: {displayCity.dominantPollutant}
                   </span>
                   <span className="text-[10px] text-amber-700 bg-amber-50 px-1.5 py-0.5 rounded border border-amber-200 font-semibold">
                     Sub-Index Driver
@@ -204,7 +270,7 @@ export const DashboardPage: React.FC = () => {
                 </h3>
               </div>
               <span className="text-xs font-semibold text-charcoal-500 bg-charcoal-50 px-2.5 py-1 rounded-lg border border-charcoal-200">
-                {selectedCity.weather.condition}
+                {displayCity.weather.condition}
               </span>
             </div>
 
@@ -215,7 +281,7 @@ export const DashboardPage: React.FC = () => {
                   <span>Temperature</span>
                 </div>
                 <div className="text-xl font-extrabold text-charcoal-900">
-                  {selectedCity.weather.temperature}°C
+                  {displayCity.weather.temperature}°C
                 </div>
                 <span className="text-[10px] text-charcoal-400 font-medium">Ambient surface</span>
               </div>
@@ -226,7 +292,7 @@ export const DashboardPage: React.FC = () => {
                   <span>Humidity</span>
                 </div>
                 <div className="text-xl font-extrabold text-charcoal-900">
-                  {selectedCity.weather.humidity}%
+                  {displayCity.weather.humidity}%
                 </div>
                 <span className="text-[10px] text-charcoal-400 font-medium">Relative humidity</span>
               </div>
@@ -237,10 +303,10 @@ export const DashboardPage: React.FC = () => {
                   <span>Wind Velocity</span>
                 </div>
                 <div className="text-xl font-extrabold text-charcoal-900">
-                  {selectedCity.weather.windSpeed} <span className="text-xs text-charcoal-500 font-normal">km/h</span>
+                  {displayCity.weather.windSpeed} <span className="text-xs text-charcoal-500 font-normal">km/h</span>
                 </div>
                 <span className="text-[10px] text-charcoal-400 font-medium truncate block">
-                  Dir: {selectedCity.weather.windDirection}
+                  Dir: {displayCity.weather.windDirection}
                 </span>
               </div>
 
@@ -250,7 +316,7 @@ export const DashboardPage: React.FC = () => {
                   <span>Visibility</span>
                 </div>
                 <div className="text-xl font-extrabold text-charcoal-900">
-                  {selectedCity.weather.visibility} <span className="text-xs text-charcoal-500 font-normal">km</span>
+                  {displayCity.weather.visibility} <span className="text-xs text-charcoal-500 font-normal">km</span>
                 </div>
                 <span className="text-[10px] text-charcoal-400 font-medium">Surface visual</span>
               </div>
@@ -280,7 +346,7 @@ export const DashboardPage: React.FC = () => {
             </div>
 
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-              {selectedCity.predictions24h.slice(0, 4).map((p, idx) => (
+              {displayCity.predictions24h.slice(0, 4).map((p, idx) => (
                 <div key={idx} className="p-3 rounded-2xl bg-[#F8FAF9] border border-charcoal-200/70 text-center">
                   <span className="text-[11px] font-bold text-charcoal-400 block mb-1">
                     {p.label}
@@ -329,7 +395,7 @@ export const DashboardPage: React.FC = () => {
           <PollutantCard
             name="PM2.5"
             fullName="Fine Particulate Matter (< 2.5 µm)"
-            value={selectedCity.pollutants.pm25}
+            value={displayCity.pollutants.pm25}
             unit="µg/m³"
             safeLimit="CPCB Limit: 60"
             status={pm25Stat.status}
@@ -341,7 +407,7 @@ export const DashboardPage: React.FC = () => {
           <PollutantCard
             name="PM10"
             fullName="Coarse Particulate Matter (< 10 µm)"
-            value={selectedCity.pollutants.pm10}
+            value={displayCity.pollutants.pm10}
             unit="µg/m³"
             safeLimit="CPCB Limit: 100"
             status={pm10Stat.status}
@@ -353,7 +419,7 @@ export const DashboardPage: React.FC = () => {
           <PollutantCard
             name="NO2"
             fullName="Nitrogen Dioxide"
-            value={selectedCity.pollutants.no2}
+            value={displayCity.pollutants.no2}
             unit="µg/m³"
             safeLimit="CPCB Limit: 80"
             status={no2Stat.status}
@@ -365,7 +431,7 @@ export const DashboardPage: React.FC = () => {
           <PollutantCard
             name="SO2"
             fullName="Sulphur Dioxide"
-            value={selectedCity.pollutants.so2}
+            value={displayCity.pollutants.so2}
             unit="µg/m³"
             safeLimit="CPCB Limit: 80"
             status={so2Stat.status}
@@ -377,7 +443,7 @@ export const DashboardPage: React.FC = () => {
           <PollutantCard
             name="CO"
             fullName="Carbon Monoxide"
-            value={selectedCity.pollutants.co}
+            value={displayCity.pollutants.co}
             unit="mg/m³"
             safeLimit="CPCB Limit: 2.0"
             status={coStat.status}
@@ -389,7 +455,7 @@ export const DashboardPage: React.FC = () => {
           <PollutantCard
             name="O3"
             fullName="Surface Ozone"
-            value={selectedCity.pollutants.o3}
+            value={displayCity.pollutants.o3}
             unit="µg/m³"
             safeLimit="CPCB Limit: 100"
             status={o3Stat.status}
@@ -408,7 +474,7 @@ export const DashboardPage: React.FC = () => {
               Pollution Trajectory & Analysis
             </h3>
             <p className="text-xs text-charcoal-500">
-              Interactive historical telemetry for {selectedCity.name}
+              Interactive historical telemetry for {displayCity.name}
             </p>
           </div>
 
@@ -451,7 +517,7 @@ export const DashboardPage: React.FC = () => {
         <div className="h-72 w-full">
           <ResponsiveContainer width="100%" height="100%">
             {activeChartTab === '24h' ? (
-              <AreaChart data={selectedCity.hourlyTrends}>
+              <AreaChart data={displayCity.hourlyTrends}>
                 <defs>
                   <linearGradient id="aqiAreaGrad" x1="0" y1="0" x2="0" y2="1">
                     <stop offset="5%" stopColor="#145C46" stopOpacity={0.4} />
@@ -480,7 +546,7 @@ export const DashboardPage: React.FC = () => {
                 />
               </AreaChart>
             ) : activeChartTab === 'pm25' ? (
-              <AreaChart data={selectedCity.hourlyTrends}>
+              <AreaChart data={displayCity.hourlyTrends}>
                 <defs>
                   <linearGradient id="pm25Grad" x1="0" y1="0" x2="0" y2="1">
                     <stop offset="5%" stopColor="#EF4444" stopOpacity={0.4} />
@@ -520,7 +586,7 @@ export const DashboardPage: React.FC = () => {
                 />
               </AreaChart>
             ) : (
-              <BarChart data={selectedCity.weeklyTrends}>
+              <BarChart data={displayCity.weeklyTrends}>
                 <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#F1F5F9" />
                 <XAxis dataKey="date" stroke="#94A3B8" fontSize={11} tickLine={false} />
                 <YAxis stroke="#94A3B8" fontSize={11} tickLine={false} />
@@ -550,7 +616,7 @@ export const DashboardPage: React.FC = () => {
                 Health & Activity Precautions
               </h3>
               <p className="text-xs text-charcoal-400">
-                Actionable advice tailored to {selectedCity.category} AQI ({selectedCity.aqi})
+                Actionable advice tailored to {displayCity.category} AQI ({displayCity.aqi})
               </p>
             </div>
           </div>
@@ -643,3 +709,4 @@ export const DashboardPage: React.FC = () => {
     </div>
   );
 };
+
